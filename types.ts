@@ -16,6 +16,16 @@ export interface WorkshopEvent {
   subInicial?: string;
 }
 
+export interface Partner {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  whatsapp: string;
+  instagram: string;
+  imageUrl: string;
+}
+
 export interface DailySummary {
   message: string;
   highlight: string;
@@ -25,10 +35,11 @@ export enum ViewMode {
   HOME = 'home',
   DASHBOARD = 'dashboard',
   SCHEDULE = 'schedule',
-  INFO = 'info'
+  INFO = 'info',
+  DIRECTORY = 'directory'
 }
 
-export type CourseType = 'SCHOOL' | 'JUMPSTART' | 'EXPERIENCE';
+export type CourseType = 'SCHOOL' | 'JUMPSTART' | 'EXPERIENCE' | 'PARTNERS';
 
 export interface Course {
   id: CourseType;
