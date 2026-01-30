@@ -1,14 +1,14 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import Header from './components/Header.tsx';
 import Dashboard from './components/Dashboard.tsx';
 import EventCard from './components/EventCard.tsx';
-import { WorkshopEvent, ViewMode, CourseType } from './types.ts';
+import PartnerDirectory from './components/PartnerDirectory.tsx';
+import { WorkshopEvent, ViewMode, CourseType, Partner } from './types.ts';
 import { MOCK_EVENTS } from './constants.ts';
 import { notificationService } from './services/notificationService.ts';
 import { SheetService, COURSES_CONFIG } from './services/sheetService.ts';
 
-const COURSE_HEADER_INFO: Record<CourseType, { title: string, subtitle: string }> = {
+const COURSE_HEADER_INFO: Record<string, { title: string, subtitle: string }> = {
   SCHOOL: {
     title: "CRIE SCHOOL",
     subtitle: "Cristãos Empreendedores"
@@ -20,23 +20,27 @@ const COURSE_HEADER_INFO: Record<CourseType, { title: string, subtitle: string }
   EXPERIENCE: {
     title: "CRIE EXPERIENCE",
     subtitle: "O conhecimento te transforma"
+  },
+  PARTNERS: {
+    title: "CRIE ECOSYSTEM",
+    subtitle: "Empresas & Serviços"
   }
 };
 
 const App: React.FC = () => {
   const [selectedCourse, setSelectedCourse] = useState<CourseType | null>(null);
   const [events, setEvents] = useState<WorkshopEvent[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.HOME);
   const [isSyncing, setIsSyncing] = useState(false);
   const [notifPermission, setNotifPermission] = useState<boolean>(false);
 
   // Carrega as legendas dinâmicas do cache para a tela inicial
   const courseSubtitles = useMemo(() => {
-    const getSub = (id: CourseType, fallback: string) => {
-      const cached = SheetService.getFromCache(id);
+    const getSub = (id: string, fallback: string) => {
+      const cached = SheetService.getFromCache(`events_${id}`);
       if (cached && cached.length > 0) {
-        // Busca o primeiro subInicial preenchido nas linhas
-        const dynamicSub = cached.find(e => e.subInicial && e.subInicial.trim() !== "")?.subInicial;
+        const dynamicSub = cached.find((e: any) => e.subInicial && e.subInicial.trim() !== "")?.subInicial;
         return dynamicSub || fallback;
       }
       return fallback;
@@ -45,25 +49,30 @@ const App: React.FC = () => {
     return {
       SCHOOL: getSub('SCHOOL', 'um chamado para cristãos'),
       JUMPSTART: getSub('JUMPSTART', 'Aceleração de Negócios'),
-      EXPERIENCE: getSub('EXPERIENCE', 'Imersão e Networking')
+      EXPERIENCE: getSub('EXPERIENCE', 'Imersão e Networking'),
+      PARTNERS: 'Conectando Membros e Negócios'
     };
   }, [viewMode]);
 
   const syncWithCloud = async (courseId: CourseType) => {
     setIsSyncing(true);
     try {
-      const freshEvents = await SheetService.fetchEvents(courseId);
-      if (freshEvents.length > 0) {
-        setEvents(freshEvents);
-        SheetService.saveToCache(courseId, freshEvents);
-        if (notificationService.hasPermission) {
-          notificationService.scheduleNotifications(freshEvents);
+      if (courseId === 'PARTNERS') {
+        const freshPartners = await SheetService.fetchPartners();
+        setPartners(freshPartners);
+        SheetService.saveToCache('partners', freshPartners);
+      } else {
+        const freshEvents = await SheetService.fetchEvents(courseId);
+        if (freshEvents.length > 0) {
+          setEvents(freshEvents);
+          SheetService.saveToCache(`events_${courseId}`, freshEvents);
+          if (notificationService.hasPermission) {
+            notificationService.scheduleNotifications(freshEvents);
+          }
         }
       }
     } catch (error) {
       console.error("Erro na sincronização:", error);
-      const cached = SheetService.getFromCache(courseId);
-      if (cached) setEvents(cached);
     } finally {
       setIsSyncing(false);
     }
@@ -71,9 +80,15 @@ const App: React.FC = () => {
 
   const selectCourse = (courseId: CourseType) => {
     setSelectedCourse(courseId);
-    const cached = SheetService.getFromCache(courseId);
-    setEvents(cached || MOCK_EVENTS);
-    setViewMode(ViewMode.DASHBOARD);
+    if (courseId === 'PARTNERS') {
+      const cached = SheetService.getFromCache('partners');
+      setPartners(cached || []);
+      setViewMode(ViewMode.DIRECTORY);
+    } else {
+      const cached = SheetService.getFromCache(`events_${courseId}`);
+      setEvents(cached || MOCK_EVENTS);
+      setViewMode(ViewMode.DASHBOARD);
+    }
     syncWithCloud(courseId);
   };
 
@@ -94,34 +109,25 @@ const App: React.FC = () => {
     return uniqueFaculty.length > 0 ? uniqueFaculty.join(', ') : "Saulo, Henrique, Adriano, Rafael e Anderson";
   }, [events]);
 
-  const { upcomingGrouped, pastGrouped } = useMemo(() => {
+  const { upcomingGrouped } = useMemo(() => {
     const now = Date.now();
     const FOUR_HOURS = 4 * 60 * 60 * 1000;
     const upcoming: WorkshopEvent[] = [];
-    const past: WorkshopEvent[] = [];
 
     events.forEach(e => {
-      if (e.timestamp + FOUR_HOURS < now) past.push(e);
-      else upcoming.push(e);
+      if (!(e.timestamp + FOUR_HOURS < now)) upcoming.push(e);
     });
 
-    const groupByDate = (evs: WorkshopEvent[]) => {
-      const groups: { [key: string]: WorkshopEvent[] } = {};
-      const sorted = [...evs].sort((a, b) => a.timestamp - b.timestamp);
-      sorted.forEach(event => {
-        const date = new Date(event.timestamp).toLocaleDateString('pt-BR', { 
-          day: '2-digit', month: 'long', weekday: 'long' 
-        });
-        if (!groups[date]) groups[date] = [];
-        groups[date].push(event);
+    const groups: { [key: string]: WorkshopEvent[] } = {};
+    const sorted = [...upcoming].sort((a, b) => a.timestamp - b.timestamp);
+    sorted.forEach(event => {
+      const date = new Date(event.timestamp).toLocaleDateString('pt-BR', { 
+        day: '2-digit', month: 'long', weekday: 'long' 
       });
-      return groups;
-    };
-
-    return {
-      upcomingGrouped: groupByDate(upcoming),
-      pastGrouped: groupByDate(past)
-    };
+      if (!groups[date]) groups[date] = [];
+      groups[date].push(event);
+    });
+    return { upcomingGrouped: groups };
   }, [events]);
 
   if (viewMode === ViewMode.HOME) {
@@ -136,46 +142,48 @@ const App: React.FC = () => {
           <p className="text-gold/80 text-[10px] uppercase tracking-[0.4em] font-bold">Ecossistema de Conhecimento</p>
         </div>
 
-        <div className="w-full max-sm:px-2 space-y-5 max-w-sm">
+        <div className="w-full max-sm:px-2 space-y-4 max-w-sm">
           {[
             { id: 'SCHOOL', name: 'CRIE School', sub: courseSubtitles.SCHOOL, icon: '🚀', color: 'from-orange-500/20' },
             { id: 'JUMPSTART', name: 'CRIE Jump Start', sub: courseSubtitles.JUMPSTART, icon: '⚡', color: 'from-blue-500/20' },
-            { id: 'EXPERIENCE', name: 'CRIE Experience', sub: courseSubtitles.EXPERIENCE, icon: '🌟', color: 'from-purple-500/20' }
+            { id: 'EXPERIENCE', name: 'CRIE Experience', sub: courseSubtitles.EXPERIENCE, icon: '🌟', color: 'from-purple-500/20' },
+            { id: 'PARTNERS', name: 'Empresas & Serviços', sub: courseSubtitles.PARTNERS, icon: '🤝', color: 'from-emerald-500/20' }
           ].map((course) => (
             <button
               key={course.id}
               onClick={() => selectCourse(course.id as CourseType)}
-              className={`w-full group relative overflow-hidden bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800 hover:border-gold p-6 rounded-[2rem] transition-all duration-500 text-left active:scale-95 shadow-xl`}
+              className={`w-full group relative overflow-hidden bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800 hover:border-gold p-5 rounded-[1.8rem] transition-all duration-500 text-left active:scale-95 shadow-xl`}
             >
               <div className={`absolute inset-0 bg-gradient-to-r ${course.color} to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700`}></div>
-              
-              <div className="flex items-center space-x-5 relative z-10">
-                <div className="w-14 h-14 rounded-2xl bg-black border border-zinc-800 group-hover:border-gold/50 flex items-center justify-center text-3xl shadow-inner transition-all duration-500 group-hover:scale-110">
+              <div className="flex items-center space-x-4 relative z-10">
+                <div className="w-12 h-12 rounded-xl bg-black border border-zinc-800 group-hover:border-gold/50 flex items-center justify-center text-2xl shadow-inner transition-all duration-500 group-hover:scale-110">
                   {course.icon}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-white font-brand font-bold text-xl group-hover:text-gold transition-colors duration-300">{course.name}</h3>
-                  <p className="text-zinc-500 group-hover:text-zinc-300 text-[10px] uppercase tracking-wider font-bold line-clamp-1 transition-colors duration-300">{course.sub}</p>
+                  <h3 className="text-white font-brand font-bold text-lg group-hover:text-gold transition-colors duration-300">{course.name}</h3>
+                  <p className="text-zinc-500 group-hover:text-zinc-300 text-[9px] uppercase tracking-wider font-bold line-clamp-1 transition-colors duration-300">{course.sub}</p>
                 </div>
                 <div className="opacity-0 group-hover:opacity-100 -translate-x-4 group-hover:translate-x-0 transition-all duration-500">
-                  <svg className="w-5 h-5 text-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7"/></svg>
+                  <svg className="w-4 h-4 text-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7"/></svg>
                 </div>
               </div>
             </button>
           ))}
         </div>
 
-        <div className="text-center space-y-4">
+        <div className="text-center">
            <p className="text-[9px] text-zinc-600 uppercase tracking-[0.5em] font-black">CRIE Ecosystem • 2025</p>
         </div>
       </div>
     );
   }
 
-  const currentHeaderInfo = selectedCourse ? COURSE_HEADER_INFO[selectedCourse] : COURSE_HEADER_INFO.SCHOOL;
+  const currentHeaderInfo = selectedCourse ? COURSE_HEADER_INFO[selectedCourse as string] : COURSE_HEADER_INFO.SCHOOL;
 
   const renderContent = () => {
     switch (viewMode) {
+      case ViewMode.DIRECTORY:
+        return <PartnerDirectory partners={partners} onBack={() => setViewMode(ViewMode.HOME)} />;
       case ViewMode.DASHBOARD:
         return <Dashboard events={events} onViewAll={() => setViewMode(ViewMode.SCHEDULE)} courseName={currentHeaderInfo.title} />;
       case ViewMode.SCHEDULE:
@@ -216,7 +224,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                    <h3 className="text-white font-brand text-xl font-bold">
-                    {selectedCourse === 'SCHOOL' ? 'CRIE School' : selectedCourse === 'JUMPSTART' ? 'CRIE Jump Start' : 'CRIE Experience'}
+                    {selectedCourse === 'SCHOOL' ? 'CRIE School' : selectedCourse === 'JUMPSTART' ? 'CRIE Jump Start' : selectedCourse === 'EXPERIENCE' ? 'CRIE Experience' : 'CRIE Ecosystem'}
                    </h3>
                    <p className="text-gold text-xs uppercase tracking-widest font-bold">Conectado e Sincronizado</p>
                 </div>
@@ -229,7 +237,6 @@ const App: React.FC = () => {
                     Mentores: <span className="text-white font-medium">{facultyList}.</span>
                   </p>
                 </div>
-
                 <div>
                   <h4 className="text-gold font-bold text-[10px] uppercase tracking-[0.2em] mb-2">Alarmes Inteligentes</h4>
                   <p className="text-zinc-300 text-sm leading-relaxed">
@@ -243,7 +250,7 @@ const App: React.FC = () => {
                   onClick={() => setViewMode(ViewMode.HOME)}
                   className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-4 rounded-2xl border border-zinc-700 transition-all text-xs uppercase tracking-widest active:scale-95"
                 >
-                  Trocar de Curso
+                  Trocar de Caminho
                 </button>
                 <p className="text-[9px] text-zinc-500 uppercase tracking-widest text-center">
                   CRIE Ecosystem © 2025
@@ -264,15 +271,18 @@ const App: React.FC = () => {
         {renderContent()}
       </main>
       
+      {/* Fix: Removed redundant viewMode !== ViewMode.HOME check as the early return at line 132 already narrows the type here. */}
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-zinc-950/90 backdrop-blur-2xl border-t border-zinc-800/50 px-8 pt-4 pb-10 flex justify-between items-center z-50">
-        <button onClick={() => setViewMode(ViewMode.DASHBOARD)} className={`flex flex-col items-center space-y-1 ${viewMode === ViewMode.DASHBOARD ? 'text-gold' : 'text-zinc-500'}`}>
+        <button onClick={() => setViewMode(selectedCourse === 'PARTNERS' ? ViewMode.DIRECTORY : ViewMode.DASHBOARD)} className={`flex flex-col items-center space-y-1 ${[ViewMode.DASHBOARD, ViewMode.DIRECTORY].includes(viewMode) ? 'text-gold' : 'text-zinc-500'}`}>
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
           <span className="text-[9px] font-bold uppercase">Início</span>
         </button>
-        <button onClick={() => setViewMode(ViewMode.SCHEDULE)} className={`flex flex-col items-center space-y-1 ${viewMode === ViewMode.SCHEDULE ? 'text-gold' : 'text-zinc-500'}`}>
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-          <span className="text-[9px] font-bold uppercase">Agenda</span>
-        </button>
+        {selectedCourse !== 'PARTNERS' && (
+          <button onClick={() => setViewMode(ViewMode.SCHEDULE)} className={`flex flex-col items-center space-y-1 ${viewMode === ViewMode.SCHEDULE ? 'text-gold' : 'text-zinc-500'}`}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+            <span className="text-[9px] font-bold uppercase">Agenda</span>
+          </button>
+        )}
         <button onClick={() => setViewMode(ViewMode.INFO)} className={`flex flex-col items-center space-y-1 ${viewMode === ViewMode.INFO ? 'text-gold' : 'text-zinc-500'}`}>
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           <span className="text-[9px] font-bold uppercase">Info</span>
@@ -283,7 +293,7 @@ const App: React.FC = () => {
         <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center">
            <div className="bg-zinc-900 border border-gold/30 p-8 rounded-3xl flex flex-col items-center space-y-4">
               <div className="w-12 h-12 border-4 border-gold/20 border-t-gold rounded-full animate-spin"></div>
-              <p className="text-gold font-bold text-xs uppercase tracking-widest text-center">Atualizando Conteúdo {selectedCourse}...</p>
+              <p className="text-gold font-bold text-xs uppercase tracking-widest text-center">Atualizando Portal...</p>
            </div>
         </div>
       )}
