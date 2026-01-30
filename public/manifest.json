@@ -1,8 +1,8 @@
 
 {
-  "short_name": "CRIE School",
-  "name": "CRIE School Workshop",
-  "description": "App oficial da CRIE School para cristãos empreendedores.",
+  "short_name": "CRIE Portal",
+  "name": "CRIE Portal",
+  "description": "App oficial da CRIE para cristãos empreendedores.",
   "icons": [
     {
       "src": "/icon.png",
